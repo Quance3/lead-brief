@@ -76,6 +76,43 @@
     td.l { white-space: normal; }
     .name { font-size: 16px; }
   }
+
+  /* next step + compose */
+  .next { border-left: 3px solid var(--accent); padding: 4px 0 4px 10px; margin-bottom: 8px; }
+  .next-title { font-weight: 700; }
+  .next-none .next-title { color: var(--red); }
+  .cmp { margin: 6px 0 4px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .card-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 6px; }
+  .card textarea, .card input[type=text], .rw textarea { width: 100%; font: inherit; color: var(--ink); border: 1px solid #ddd5da;
+    border-radius: 6px; padding: 7px 8px; resize: vertical; background: #fff; }
+  .card input[type=text] { margin-bottom: 6px; font-weight: 600; }
+  .card textarea:focus, .card input[type=text]:focus, .rw textarea:focus { outline: 2px solid #f6c89b; border-color: var(--accent); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  .count { font-size: 11px; color: var(--muted); }
+  .btn { font: inherit; font-weight: 700; border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer;
+    background: var(--accent); color: #fff; }
+  .btn:disabled { background: #d9d2d6; color: #fff; cursor: not-allowed; }
+  .btn-ghost { background: #fff; color: var(--ink); border: 1px solid #cfc6cc; }
+  .blocked { margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--red); }
+  .confirm { margin-top: 8px; background: #fff7ef; border: 1px solid #f6d5a6; border-radius: 6px; padding: 8px 10px; }
+  .confirm .q { font-weight: 700; margin-bottom: 4px; }
+  .confirm .words { white-space: pre-wrap; background: #fff; border: 1px solid var(--line); border-radius: 4px;
+    padding: 6px 8px; margin: 4px 0 8px; }
+  .confirm .btns { display: flex; gap: 8px; }
+  .result-ok { margin-top: 6px; font-weight: 700; color: #1b7a3a; }
+  .result-err { margin-top: 6px; font-weight: 700; color: var(--red); }
+  .warn48 { background: var(--red-bg); color: var(--red); border-radius: 6px; padding: 6px 9px; font-weight: 700; margin-bottom: 8px; }
+  .rw { border: 1px dashed #e3c3a3; border-radius: 8px; padding: 10px; margin-bottom: 8px; background: #fffaf5; }
+  .rw .card-h { margin-bottom: 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .chipbtn { font: inherit; font-size: 12px; font-weight: 600; border: 1px solid #e3c3a3; background: #fff; color: var(--ink);
+    border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+  .chipbtn:hover { border-color: var(--accent); }
+  .sum { margin: 2px 0 4px 18px; padding: 0; }
+  .sum li { margin: 2px 0; }
+  .linkish { color: var(--accent); font-weight: 600; text-decoration: none; cursor: pointer; background: none; border: 0; padding: 0; font: inherit; }
+  .linkish:hover { text-decoration: underline; }
 </style>
 <title>Lead Brief</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -85,9 +122,11 @@
 <script>
   /*
    * Lead Brief shell. SureSend frames this page (not script.google.com), and it
-   * asks the Apps Script web app for the brief with credentials omitted, so the
-   * viewer's Google sign-ins never reach Google. The web app verifies the
-   * SureSend signature on every call; this page holds no secret.
+   * talks to the Apps Script web app with credentials omitted, so the viewer's
+   * Google sign-ins never reach Google. The web app verifies the SureSend
+   * signature on every call and re-checks every send rule on the server; this
+   * page holds no secret. Nothing is sent until Kimo clicks Send and then
+   * confirms the exact words.
    */
   (function () {
     var EXEC = 'https://script.google.com/macros/s/AKfycbyDFt__4_b5pVbqtdxlRX3fOKRPoysngjU5nPb36mZRbV3sfAG5fwmbP213lEVp3CLlEQ/exec';
@@ -97,20 +136,236 @@
     var sig = q.get('signature') || '';
     var box = document.getElementById('brief');
 
+    function api(params) {
+      var url = EXEC + '?format=json&context=' + encodeURIComponent(ctx) + '&signature=' + encodeURIComponent(sig) + params;
+      return fetch(url, { credentials: 'omit', redirect: 'follow', cache: 'no-store' }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      });
+    }
+
+    function post(payload) {
+      payload.action = payload.action || 'send';
+      payload.context = ctx;
+      payload.signature = sig;
+      return fetch(EXEC, { method: 'POST', credentials: 'omit', redirect: 'follow', cache: 'no-store',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    }
+
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined && text !== null) e.textContent = text;
+      return e;
+    }
+
+    function newId() {
+      if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+      return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+    }
+
     function setStatus(msg) {
-      var el = document.getElementById('status');
-      if (el) el.textContent = msg;
+      var s = document.getElementById('status');
+      if (s) s.textContent = msg;
+    }
+
+    /* ---------- one send card (text or email) ---------- */
+    function card(kind, d, name) {
+      var isText = kind === 'text';
+      var info = isText ? d.text : d.email;
+      var c = el('div', 'card');
+      c.appendChild(el('div', 'card-h', (isText ? 'Text' : 'Email') + (info.to ? ' to ' + info.to : '')));
+      var subj = null;
+      if (!isText) {
+        subj = el('input');
+        subj.type = 'text';
+        subj.placeholder = 'Subject';
+        subj.value = info.subject || '';
+        c.appendChild(subj);
+      }
+      var ta = el('textarea');
+      ta.rows = isText ? 4 : 9;
+      ta.value = info.body || '';
+      c.appendChild(ta);
+      var row = el('div', 'row');
+      var count = el('span', 'count');
+      var btn = el('button', 'btn', isText ? 'Send text' : 'Send email');
+      row.appendChild(count);
+      row.appendChild(btn);
+      c.appendChild(row);
+      var confirmBox = el('div', 'confirm');
+      confirmBox.hidden = true;
+      c.appendChild(confirmBox);
+      var result = el('div');
+      c.appendChild(result);
+      var nonce = newId();
+      var sent = false;
+
+      function update() {
+        count.textContent = ta.value.length + ' characters' + (isText && ta.value.length > 300 ? ' (long for a text)' : '');
+        btn.disabled = sent || !!info.blocked || !ta.value.trim() || (!isText && !subj.value.trim());
+      }
+      ta.addEventListener('input', update);
+      if (subj) subj.addEventListener('input', update);
+      if (info.blocked) c.appendChild(el('div', 'blocked', info.blocked));
+      update();
+
+      btn.addEventListener('click', function () {
+        confirmBox.textContent = '';
+        confirmBox.appendChild(el('div', 'q', 'Send this ' + (isText ? 'text' : 'email') + ' to ' + (name || 'this contact') +
+          (info.to ? ' at ' + info.to : '') + '?'));
+        if (!isText) confirmBox.appendChild(el('div', '', 'Subject: ' + subj.value.trim()));
+        confirmBox.appendChild(el('div', 'words', ta.value.trim()));
+        var btns = el('div', 'btns');
+        var yes = el('button', 'btn', 'Yes, send it');
+        var no = el('button', 'btn btn-ghost', 'Cancel');
+        btns.appendChild(yes);
+        btns.appendChild(no);
+        confirmBox.appendChild(btns);
+        confirmBox.hidden = false;
+        btn.disabled = true;
+        ta.disabled = true;
+        if (subj) subj.disabled = true;
+        no.addEventListener('click', function () {
+          confirmBox.hidden = true;
+          ta.disabled = false;
+          if (subj) subj.disabled = false;
+          update();
+        });
+        yes.addEventListener('click', function () {
+          yes.disabled = true;
+          no.disabled = true;
+          yes.textContent = 'Sending...';
+          post({ channel: kind, body: ta.value.trim(), subject: subj ? subj.value.trim() : '', nonce: nonce })
+            .then(function (r) {
+              confirmBox.hidden = true;
+              if (r && r.ok) {
+                sent = true;
+                result.className = 'result-ok';
+                result.textContent = r.message;
+              } else {
+                ta.disabled = false;
+                if (subj) subj.disabled = false;
+                result.className = 'result-err';
+                result.textContent = (r && r.error) || 'Not sent.';
+              }
+              update();
+            })
+            .catch(function () {
+              confirmBox.hidden = true;
+              result.className = 'result-err';
+              result.textContent = "Couldn't reach the server. Check the contact's texts and emails before trying again.";
+              ta.disabled = false;
+              if (subj) subj.disabled = false;
+              update();
+            });
+        });
+      });
+      return c;
+    }
+
+    function renderDrafts(slot, d) {
+      slot.textContent = '';
+      var wrap = el('div', 'cmp');
+      if (!d.ok) {
+        wrap.appendChild(el('div', 'muted', d.error || "Couldn't write drafts."));
+        slot.appendChild(wrap);
+        return;
+      }
+      if (d.recentSends > 0) {
+        wrap.appendChild(el('div', 'warn48', 'Heads up: ' + d.recentSends + (d.recentSends === 1 ? ' message' : ' messages') +
+          ' went to this contact in the last ' + d.recentHours + ' hours.'));
+      }
+      if (d.problem) wrap.appendChild(el('div', 'blocked', 'Check the wording: the draft contains "' + d.problem + '".'));
+      var tCard = card('text', d, d.name);
+      var eCard = card('email', d, d.name);
+      wrap.appendChild(tCard);
+      wrap.appendChild(eCard);
+      wrap.appendChild(rewriteBox(slot, tCard, eCard));
+      slot.appendChild(wrap);
+    }
+
+    /* ---------- rewrite: Kimo says what to change, both drafts come back ---------- */
+    var QUICK = ['Shorter', 'More casual', 'Ask for a quick call', 'No question, just a check-in', 'Mention the property'];
+    function rewriteBox(slot, tCard, eCard) {
+      var box = el('div', 'rw');
+      box.appendChild(el('div', 'card-h', 'Not quite right? Tell me what to change'));
+      var note = el('textarea');
+      note.rows = 2;
+      note.placeholder = 'Example: mention I can show it Saturday, and keep it to two sentences';
+      box.appendChild(note);
+      var chips = el('div', 'chips');
+      QUICK.forEach(function (label) {
+        var c = el('button', 'chipbtn', label);
+        c.addEventListener('click', function () {
+          note.value = note.value.trim() ? note.value.trim() + '. ' + label : label;
+          note.focus();
+        });
+        chips.appendChild(c);
+      });
+      box.appendChild(chips);
+      var row = el('div', 'row');
+      var status = el('span', 'count');
+      var go = el('button', 'btn', 'Rewrite');
+      row.appendChild(status);
+      row.appendChild(go);
+      box.appendChild(row);
+      go.addEventListener('click', function () {
+        var tBody = tCard.querySelector('textarea').value;
+        var eSubj = eCard.querySelector('input').value;
+        var eBody = eCard.querySelector('textarea').value;
+        go.disabled = true;
+        status.textContent = 'Rewriting...';
+        post({ action: 'rewrite', note: note.value.trim(), text: tBody, subject: eSubj, body: eBody })
+          .then(function (d) {
+            if (d && d.ok) renderDrafts(slot, d);
+            else { go.disabled = false; status.textContent = (d && d.error) || "Couldn't rewrite."; }
+          })
+          .catch(function () { go.disabled = false; status.textContent = "Couldn't reach the server. Try again."; });
+      });
+      return box;
+    }
+
+    function loadDrafts(slot, fresh) {
+      slot.textContent = '';
+      slot.appendChild(el('div', 'muted', 'Writing a text and an email in your voice...'));
+      api('&action=drafts' + (fresh ? '&fresh=1' : ''))
+        .then(function (d) { renderDrafts(slot, d); })
+        .catch(function () { slot.textContent = ''; slot.appendChild(el('div', 'muted', "Couldn't load drafts. Reopen the contact.")); });
+    }
+
+    function setupCompose() {
+      var slot = document.getElementById('compose');
+      if (!slot) return;
+      var mode = slot.getAttribute('data-mode');
+      if (mode === 'auto') loadDrafts(slot, false);
+      else if (mode === 'button') {
+        var b = el('button', 'btn btn-ghost', 'Write a text and email anyway');
+        b.addEventListener('click', function () { loadDrafts(slot, false); });
+        slot.appendChild(b);
+      }
+    }
+
+    function setupSummary() {
+      var slot = document.getElementById('summary');
+      if (!slot) return;
+      slot.appendChild(el('div', 'muted', 'Summarizing this lead...'));
+      api('&action=summary').then(function (d) {
+        slot.textContent = '';
+        if (!d || !d.ok) { slot.appendChild(el('div', 'muted', (d && d.error) || "Couldn't write the summary.")); return; }
+        var ul = el('ul', 'sum');
+        d.bullets.forEach(function (t) { ul.appendChild(el('li', '', t)); });
+        slot.appendChild(ul);
+      }).catch(function () { slot.textContent = ''; slot.appendChild(el('div', 'muted', "Couldn't load the summary.")); });
     }
 
     function load(refresh) {
-      var url = EXEC + '?format=json&context=' + encodeURIComponent(ctx) +
-        '&signature=' + encodeURIComponent(sig) + (refresh ? '&refresh=1' : '');
-      return fetch(url, { credentials: 'omit', redirect: 'follow', cache: 'no-store' })
-        .then(function (r) {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.json();
-        })
-        .then(function (d) { box.innerHTML = (d && d.html) || ''; });
+      return api(refresh ? '&refresh=1' : '').then(function (d) {
+        box.innerHTML = (d && d.html) || '';
+        setupSummary();
+        setupCompose();
+      });
     }
 
     load(false).catch(function () {
